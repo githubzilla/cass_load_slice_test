@@ -99,6 +99,11 @@ std::string_view ErrorMessage(CassFuture *future) {
   return {message, length};
 }
 
+static const std::string GetUniformTableName(const std::string &database_name,
+                                             const std::string &table_name) {
+  return "./" + database_name + "/" + table_name;
+}
+
 class TableConfig {
  public:
   TableConfig(const std::string &database_name, const std::string &table_name,
@@ -121,6 +126,9 @@ class TableConfig {
   const std::vector<std::string> &columns() const { return columns_; }
   const std::vector<std::string> &column_types() const { return column_types_; }
   const std::vector<TableSlice> &table_slices() const { return table_slices_; }
+  const std::string GetUniformTableName() {
+    return ::GetUniformTableName(database_name_, table_name_);
+  }
   void print_debug_info() {
     std::cout << "table_name: " << table_name_ << std::endl;
     std::cout << "keyspace: " << keyspace_ << std::endl;
@@ -147,11 +155,6 @@ class TableConfig {
   std::vector<std::string> column_types_;
   std::vector<TableSlice> table_slices_;
 };
-
-std::string GetUniformTableName(const std::string &database_name,
-                                const std::string &table_name) {
-  return "./" + database_name + "/" + table_name;
-}
 
 class CassHandler {
  public:
@@ -332,7 +335,8 @@ class CassHandler {
     TableConfig table_config(database_name, table_name, keyspace, kvtablename,
                              table_columns, table_column_types, table_slices);
     table_config.print_debug_info();
-    table_configs_.emplace(std::make_pair(table_name, std::move(table_config)));
+    table_configs_.emplace(std::make_pair(table_config.GetUniformTableName(),
+                                          std::move(table_config)));
 
     return true;
   }
