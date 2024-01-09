@@ -4,6 +4,7 @@
 #include <cassert>
 #include <chrono>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <mutex>
 #include <random>
@@ -34,7 +35,7 @@ DEFINE_string(mono_table_columns, "c, t", "Monograph columns, comma separated");
 DEFINE_string(mono_table_column_types, "blob, int",
               "Monograph column types, comma separated");
 
-DEFINE_int32(num_threads, 1, "Number of threads");
+DEFINE_int32(num_threads, 10, "Number of threads");
 DEFINE_int32(max_flying_req_num, 100, "Max flying request number");
 DEFINE_int32(test_duration, 60, "Test duration in seconds");
 DEFINE_int32(report_interval, 5, "Report interval in seconds");
@@ -324,19 +325,47 @@ class CassHandler {
     return true;
   }
 
-  size_t LoadSlices(const std::string &database_name,
-                    const std::string &table_name, size_t slice_idx) {
+  static void OnLoadSlices(CassFuture *load_slice_result_future, void *data) {
+    auto *callback = static_cast<std::function<void(size_t)> *>(data);
+    cass_future_wait(load_slice_result_future);
+    CassError rc = cass_future_error_code(load_slice_result_future);
+    if (rc != CASS_OK) {
+      std::cerr << "Failed to execute query: "
+                << ErrorMessage(load_slice_result_future) << std::endl;
+      cass_future_free(load_slice_result_future);
+      (*callback)(0);
+      return;
+    }
+    const CassResult *load_slice_result =
+        cass_future_get_result(load_slice_result_future);
+    CassIterator *load_slice_iterator =
+        cass_iterator_from_result(load_slice_result);
+    size_t row_cnt = 0;
+    while (cass_iterator_next(load_slice_iterator)) {
+      row_cnt++;
+    }
+    cass_iterator_free(load_slice_iterator);
+    cass_result_free(load_slice_result);
+    cass_future_free(load_slice_result_future);
+    (*callback)(row_cnt);
+  }
+
+  void LoadSlices(const std::string &database_name,
+                  const std::string &table_name, size_t slice_idx,
+                  std::function<void(size_t)> callback) {
     std::cout << "Load: " << table_name << " , at slice: " << slice_idx
               << std::endl;
     if (slice_idx == 0) {
-      return 0;
+      callback(0);
+      return;
     }
     std::unique_lock<std::mutex> lk(mutex_);
     auto table_config_it = table_configs_.find(table_name);
     if (table_config_it == table_configs_.end()) {
       std::cerr << "Failed to find table config" << std::endl;
       lk.unlock();
-      return 0;
+      callback(0);
+      return;
     }
     const TableConfig &table_config = table_config_it->second;
     const std::string &kv_table_name = table_config.kv_table_name();
@@ -345,7 +374,8 @@ class CassHandler {
     if (slice_idx >= table_slices.size()) {
       std::cerr << "Invalid slice index" << std::endl;
       lk.unlock();
-      return 0;
+      callback(0);
+      return;
     }
     const TableSlice &table_slice = table_slices[slice_idx];
     const int32_t partition_id = table_slice.partition_id();
@@ -371,26 +401,8 @@ class CassHandler {
         reinterpret_cast<const cass_byte_t *>(end_key.data()), end_key.size());
     CassFuture *load_slice_result_future =
         cass_session_execute(session_, load_slice_statement);
-    cass_future_wait(load_slice_result_future);
-    CassError rc = cass_future_error_code(load_slice_result_future);
-    if (rc != CASS_OK) {
-      std::cerr << "Failed to execute query: "
-                << ErrorMessage(load_slice_result_future) << std::endl;
-      cass_future_free(load_slice_result_future);
-      cass_statement_free(load_slice_statement);
-      return 0;
-    }
-    const CassResult *load_slice_result =
-        cass_future_get_result(load_slice_result_future);
-    CassIterator *load_slice_iterator =
-        cass_iterator_from_result(load_slice_result);
-    size_t row_cnt = 0;
-    while (cass_iterator_next(load_slice_iterator)) {
-      row_cnt++;
-    }
+    cass_future_set_callback(load_slice_result_future, OnLoadSlices, &callback);
     cass_future_free(load_slice_result_future);
-    cass_statement_free(load_slice_statement);
-    return row_cnt;
   }
 
   size_t GetSlicesCount(const std::string &database_name,
@@ -510,10 +522,11 @@ void RunLoadSlicesLoop(const int64_t runner_idx, CassHandler &cass_handler,
     std::uniform_int_distribution<int64_t> slice_dist(0, slice_cnt - 1);
     int64_t slice_idx = table_name_dist(generator);
     // load slice
-    size_t result_cnt =
-        cass_handler.LoadSlices(database_name, table_name, slice_idx);
-    running_state.inc_req_cnt(result_cnt);
-    running_state.dec_flying_req_cnt();
+    cass_handler.LoadSlices(database_name, table_name, slice_idx,
+                            [&running_state](size_t result_cnt) {
+                              running_state.inc_req_cnt(result_cnt);
+                              running_state.dec_flying_req_cnt();
+                            });
   }
 }
 
