@@ -479,8 +479,9 @@ class RunningState {
     if (duration == 0) {
       return {0, 0};
     }
-    auto qps = static_cast<double>(req_cnt_) / duration / 1000;
-    auto avg_result_cnt = static_cast<double>(result_cnt_) / req_cnt_;
+    auto qps = static_cast<double>(req_cnt_) / (duration / 1000.0);
+    auto avg_result_cnt =
+        static_cast<double>(result_cnt_) / (duration / 1000.0);
     req_cnt_ = 0;
     result_cnt_ = 0;
     start_time_ = now_time;
