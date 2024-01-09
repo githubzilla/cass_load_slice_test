@@ -45,6 +45,8 @@ typedef unsigned char uchar; /* Short for unsigned char */
 static const char MARIADB_TABLES[] = "mariadb_tables";
 static const char TABLE_RANGES[] = "table_ranges";
 
+bool debug_output = false;
+
 class TableSlice {
  public:
   TableSlice() = delete;
@@ -196,8 +198,11 @@ class CassHandler {
     std::string table_config_query =
         "SELECT tablename, kvtablename, kvindexname FROM " + keyspace + "." +
         MARIADB_TABLES + " WHERE tablename = ?";
-    std::cout << "table_config_query: " << table_config_query
-              << " ,tablename: " << tablename << std::endl;
+
+    if (debug_output) {
+      std::cout << "table_config_query: " << table_config_query
+                << " ,tablename: " << tablename << std::endl;
+    }
     CassStatement *table_config_statement =
         cass_statement_new(table_config_query.c_str(), 1);
     cass_statement_bind_string(table_config_statement, 0, tablename.c_str());
@@ -251,8 +256,11 @@ class CassHandler {
         "\"___version___\", \"___slice_keys___\", \"___slice_sizes___\" FROM " +
         keyspace + "." + TABLE_RANGES +
         " WHERE tablename = ? ORDER BY \"___mono_key___\" ASC";
+    if (debug_output)
+    {
     std::cout << "table_range_query: " << table_range_query
               << " ,tablename: " << tablename << std::endl;
+    }
     CassStatement *table_range_statement =
         cass_statement_new(table_range_query.c_str(), 1);
     cass_statement_bind_string(table_range_statement, 0, tablename.c_str());
@@ -327,7 +335,6 @@ class CassHandler {
 
   static void OnLoadSlices(CassFuture *load_slice_result_future, void *data) {
     auto *callback = static_cast<std::function<void(size_t)> *>(data);
-    cass_future_wait(load_slice_result_future);
     CassError rc = cass_future_error_code(load_slice_result_future);
     if (rc != CASS_OK) {
       std::cerr << "Failed to execute query: "
@@ -346,15 +353,17 @@ class CassHandler {
     }
     cass_iterator_free(load_slice_iterator);
     cass_result_free(load_slice_result);
-    cass_future_free(load_slice_result_future);
     (*callback)(row_cnt);
   }
 
   void LoadSlices(const std::string &database_name,
                   const std::string &table_name, size_t slice_idx,
                   std::function<void(size_t)> callback) {
+    if (debug_output)
+    {
     std::cout << "Load: " << table_name << " , at slice: " << slice_idx
               << std::endl;
+    }
     if (slice_idx == 0) {
       callback(0);
       return;
@@ -387,7 +396,10 @@ class CassHandler {
         "SELECT * FROM " + keyspace + "." + kv_table_name +
         " WHERE pk1_ = ? AND pk2_ = ? AND \"___mono_key___\" >= ? AND "
         "\"___mono_key___\" < ? ALLOW FILTERING";
+    if (debug_output)
+    {
     std::cout << "load_slice_query: " << load_slice_query << std::endl;
+    }
     CassStatement *load_slice_statement =
         cass_statement_new(load_slice_query.c_str(), 4);
     cass_statement_bind_int32(load_slice_statement, 0, partition_id);
@@ -399,9 +411,11 @@ class CassHandler {
     cass_statement_bind_bytes(
         load_slice_statement, 3,
         reinterpret_cast<const cass_byte_t *>(end_key.data()), end_key.size());
+    cass_statement_set_paging_size(load_slice_statement, 1000);
     CassFuture *load_slice_result_future =
         cass_session_execute(session_, load_slice_statement);
     cass_future_set_callback(load_slice_result_future, OnLoadSlices, &callback);
+    cass_statement_free(load_slice_statement);
     cass_future_free(load_slice_result_future);
   }
 
@@ -578,6 +592,7 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
+  std::cout << "Start loading table config..." << std::endl;
   std::vector<std::string> table_names =
       SplitString(FLAGS_mono_table_names, ',');
   std::vector<std::string> table_columns =
@@ -585,6 +600,7 @@ int main(int argc, char *argv[]) {
   std::vector<std::string> table_column_types =
       SplitString(FLAGS_mono_table_column_types, ',');
   for (auto &table_name : table_names) {
+    std::cout << "Loading table config for table: " << table_name << std::endl;
     if (!cass_handler.LoadTableConfig(FLAGS_cass_keyspace,
                                       FLAGS_mono_database_name, table_name,
                                       table_columns, table_column_types)) {
@@ -593,6 +609,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  std::cout << "Start test running..." << std::endl;
   RunningState running_state(FLAGS_max_flying_req_num);
   LoadSlicesStressTest(cass_handler, FLAGS_mono_database_name, table_names,
                        running_state);
