@@ -1,6 +1,6 @@
 [submodule "cass"]
 	path = cass
-	url = ./cass
+	url = https://github.com/monographdb/cpp-driver.git
 [submodule "cpp-driver"]
 	path = cpp-driver
 	url = https://github.com/monographdb/cpp-driver.git
