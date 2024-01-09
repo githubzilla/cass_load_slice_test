@@ -461,6 +461,7 @@ class RunningState {
   void set_stop_flag(bool stop_flag) { stop_flag_.store(stop_flag); }
   void inc_flying_req_cnt() { flying_req_cnt_.fetch_add(1); }
   void dec_flying_req_cnt() { flying_req_cnt_.fetch_sub(1); }
+  int64_t flying_req_cnt() const { return flying_req_cnt_.load(); }
   bool is_flying_req_cnt_full() {
     return flying_req_cnt_.load() >= max_flying_req_cnt_;
   }
@@ -509,7 +510,7 @@ void DumpQPS(RunningState &running_state) {
                      .count()
               << ", qps: " << qps.first << "/s, select rows: " << qps.second
               << "/s, flying_req_cnt: "
-              << running_state.is_flying_req_cnt_full() << std::endl;
+              << running_state.flying_req_cnt() << std::endl;
   }
 }
 
