@@ -148,6 +148,11 @@ class TableConfig {
   std::vector<TableSlice> table_slices_;
 };
 
+std::string GetUniformTableName(const std::string &database_name,
+                                const std::string &table_name) {
+  return "./" + database_name + "/" + table_name;
+}
+
 class CassHandler {
  public:
   CassHandler(const std::string &cass_endpoints, const uint32_t cass_port,
@@ -194,7 +199,7 @@ class CassHandler {
                        const std::vector<std::string> &table_column_types) {
     std::lock_guard<std::mutex> lock(mutex_);
     // load mono table config
-    std::string tablename = "./" + database_name + "/" + table_name;
+    std::string tablename = GetUniformTableName(database_name, table_name);
     std::string table_config_query =
         "SELECT tablename, kvtablename, kvindexname FROM " + keyspace + "." +
         MARIADB_TABLES + " WHERE tablename = ?";
@@ -256,10 +261,9 @@ class CassHandler {
         "\"___version___\", \"___slice_keys___\", \"___slice_sizes___\" FROM " +
         keyspace + "." + TABLE_RANGES +
         " WHERE tablename = ? ORDER BY \"___mono_key___\" ASC";
-    if (debug_output)
-    {
-    std::cout << "table_range_query: " << table_range_query
-              << " ,tablename: " << tablename << std::endl;
+    if (debug_output) {
+      std::cout << "table_range_query: " << table_range_query
+                << " ,tablename: " << tablename << std::endl;
     }
     CassStatement *table_range_statement =
         cass_statement_new(table_range_query.c_str(), 1);
@@ -359,19 +363,19 @@ class CassHandler {
   void LoadSlices(const std::string &database_name,
                   const std::string &table_name, size_t slice_idx,
                   std::function<void(size_t)> callback) {
-    if (debug_output)
-    {
-    std::cout << "Load: " << table_name << " , at slice: " << slice_idx
-              << std::endl;
+    if (debug_output) {
+      std::cout << "Load: " << table_name << " , at slice: " << slice_idx
+                << std::endl;
     }
     if (slice_idx == 0) {
       callback(0);
       return;
     }
     std::unique_lock<std::mutex> lk(mutex_);
-    auto table_config_it = table_configs_.find(table_name);
+    std::string tablename = GetUniformTableName(database_name, table_name);
+    auto table_config_it = table_configs_.find(tablename);
     if (table_config_it == table_configs_.end()) {
-      std::cerr << "Failed to find table config" << std::endl;
+      std::cerr << "Failed to find table config, tablename: " << std::endl;
       lk.unlock();
       callback(0);
       return;
@@ -396,9 +400,8 @@ class CassHandler {
         "SELECT * FROM " + keyspace + "." + kv_table_name +
         " WHERE pk1_ = ? AND pk2_ = ? AND \"___mono_key___\" >= ? AND "
         "\"___mono_key___\" < ? ALLOW FILTERING";
-    if (debug_output)
-    {
-    std::cout << "load_slice_query: " << load_slice_query << std::endl;
+    if (debug_output) {
+      std::cout << "load_slice_query: " << load_slice_query << std::endl;
     }
     CassStatement *load_slice_statement =
         cass_statement_new(load_slice_query.c_str(), 4);
@@ -422,7 +425,7 @@ class CassHandler {
   size_t GetSlicesCount(const std::string &database_name,
                         const std::string &table_name) {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::string tablename = "./" + database_name + "/" + table_name;
+    std::string tablename = GetUniformTableName(database_name, table_name);
     auto table_config_it = table_configs_.find(tablename);
     if (table_config_it == table_configs_.end()) {
       std::cerr << "Failed to find table config" << std::endl;
@@ -523,14 +526,15 @@ void RunLoadSlicesLoop(const int64_t runner_idx, CassHandler &cass_handler,
     std::uniform_int_distribution<int64_t> table_name_dist(
         0, table_names.size() - 1);
     std::string table_name = table_names[table_name_dist(generator)];
+    std::string tablename = GetUniformTableName(database_name, table_name);
 
     // select slice
     int64_t slice_cnt = 0;
-    if (table_slices_map.find(table_name) == table_slices_map.end()) {
+    if (table_slices_map.find(tablename) == table_slices_map.end()) {
       slice_cnt = cass_handler.GetSlicesCount(database_name, table_name);
-      table_slices_map.emplace(std::make_pair(table_name, slice_cnt));
+      table_slices_map.emplace(std::make_pair(tablename, slice_cnt));
     } else {
-      slice_cnt = table_slices_map[table_name];
+      slice_cnt = table_slices_map[tablename];
     }
 
     std::uniform_int_distribution<int64_t> slice_dist(0, slice_cnt - 1);
