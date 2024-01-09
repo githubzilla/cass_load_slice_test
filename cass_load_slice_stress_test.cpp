@@ -375,7 +375,8 @@ class CassHandler {
     std::string tablename = GetUniformTableName(database_name, table_name);
     auto table_config_it = table_configs_.find(tablename);
     if (table_config_it == table_configs_.end()) {
-      std::cerr << "Failed to find table config, tablename: " << std::endl;
+      std::cerr << "Failed to find table config, tablename: " << tablename
+                << std::endl;
       lk.unlock();
       callback(0);
       return;
