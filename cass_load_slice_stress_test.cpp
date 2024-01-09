@@ -6,8 +6,10 @@
 #include <cstring>
 #include <iostream>
 #include <mutex>
+#include <random>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -34,7 +36,8 @@ DEFINE_string(mono_table_column_types, "blob, int",
 
 DEFINE_int32(num_threads, 1, "Number of threads");
 DEFINE_int32(max_flying_req_num, 100, "Max flying request number");
-DEFINE_int32(test_duration, 10, "Test duration in seconds");
+DEFINE_int32(test_duration, 60, "Test duration in seconds");
+DEFINE_int32(report_interval, 5, "Report interval in seconds");
 
 typedef unsigned char uchar; /* Short for unsigned char */
 
@@ -65,6 +68,8 @@ class TableSlice {
   std::vector<char> end_key_;
   int32_t partition_id_;
 };
+
+auto now() { return std::chrono::high_resolution_clock::now(); }
 
 inline std::string trim(std::string &str) {
   str.erase(str.find_last_not_of(' ') + 1);  // suffixing spaces
@@ -407,6 +412,131 @@ class CassHandler {
   std::unordered_map<std::string, TableConfig> table_configs_;
 };
 
+class RunningState {
+ public:
+  explicit RunningState(const int64_t max_flying_req_cnt)
+      : stop_flag_(false),
+        flying_req_cnt_(0),
+        max_flying_req_cnt_(max_flying_req_cnt),
+        req_cnt_(0),
+        result_cnt_(0) {
+    start_time_ = now();
+  }
+
+  bool stop_flag() const { return stop_flag_.load(); }
+  void set_stop_flag(bool stop_flag) { stop_flag_.store(stop_flag); }
+  void inc_flying_req_cnt() { flying_req_cnt_.fetch_add(1); }
+  void dec_flying_req_cnt() { flying_req_cnt_.fetch_sub(1); }
+  bool is_flying_req_cnt_full() {
+    return flying_req_cnt_.load() >= max_flying_req_cnt_;
+  }
+  void inc_req_cnt(int64_t result_cnt) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    req_cnt_++;
+    result_cnt_ += result_cnt;
+  }
+
+  std::pair<double, double> qps() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto now_time = now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now_time - start_time_)
+                        .count();
+    if (duration == 0) {
+      return {0, 0};
+    }
+    auto qps = static_cast<double>(req_cnt_) / duration / 1000;
+    auto avg_result_cnt = static_cast<double>(result_cnt_) / req_cnt_;
+    req_cnt_ = 0;
+    result_cnt_ = 0;
+    start_time_ = now_time;
+    return {qps, avg_result_cnt};
+  }
+
+ private:
+  std::atomic<bool> stop_flag_;
+  std::atomic<int64_t> flying_req_cnt_;
+  int64_t max_flying_req_cnt_;
+  int64_t req_cnt_;
+  int64_t result_cnt_;
+  std::chrono::time_point<std::chrono::high_resolution_clock> start_time_;
+  std::mutex mutex_;
+};
+
+void DumpQPS(RunningState &running_state) {
+  while (running_state.stop_flag() == false) {
+    std::this_thread::sleep_for(std::chrono::seconds(FLAGS_report_interval));
+    auto qps = running_state.qps();
+
+    // print timestamp, qps, avg_result_cnt, flying_req_cnt
+    std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(
+                     now().time_since_epoch())
+                     .count()
+              << ", qps: " << qps.first << "/s, select rows: " << qps.second
+              << "/s, flying_req_cnt: "
+              << running_state.is_flying_req_cnt_full() << std::endl;
+  }
+}
+
+void RunLoadSlicesLoop(const int64_t runner_idx, CassHandler &cass_handler,
+                       const std::string database_name,
+                       const std::vector<std::string> table_names,
+                       RunningState &running_state) {
+  std::random_device rd;
+  std::default_random_engine generator(rd());
+  std::unordered_map<std::string, int64_t> table_slices_map;
+
+  while (running_state.stop_flag() == false) {
+    if (running_state.is_flying_req_cnt_full()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      continue;
+    }
+
+    running_state.inc_flying_req_cnt();
+    // select table
+    std::uniform_int_distribution<int64_t> table_name_dist(
+        0, table_names.size() - 1);
+    std::string table_name = table_names[table_name_dist(generator)];
+
+    // select slice
+    int64_t slice_cnt = 0;
+    if (table_slices_map.find(table_name) == table_slices_map.end()) {
+      slice_cnt = cass_handler.GetSlicesCount(database_name, table_name);
+      table_slices_map.emplace(std::make_pair(table_name, slice_cnt));
+    } else {
+      slice_cnt = table_slices_map[table_name];
+    }
+
+    std::uniform_int_distribution<int64_t> slice_dist(0, slice_cnt - 1);
+    int64_t slice_idx = table_name_dist(generator);
+    // load slice
+    size_t result_cnt =
+        cass_handler.LoadSlices(database_name, table_name, slice_idx);
+    running_state.inc_req_cnt(result_cnt);
+    running_state.dec_flying_req_cnt();
+  }
+}
+
+void LoadSlicesStressTest(CassHandler &cass_handler,
+                          const std::string &database_name,
+                          std::vector<std::string> table_names,
+                          RunningState &running_state) {
+  std::vector<std::thread> threads;
+  for (int64_t i = 0; i < FLAGS_num_threads; i++) {
+    threads.emplace_back(std::thread(RunLoadSlicesLoop, i,
+                                     std::ref(cass_handler), database_name,
+                                     table_names, std::ref(running_state)));
+  }
+  std::thread qps_thread(DumpQPS, std::ref(running_state));
+
+  std::this_thread::sleep_for(std::chrono::seconds(FLAGS_test_duration));
+  running_state.set_stop_flag(true);
+  for (auto &thread : threads) {
+    thread.join();
+  }
+  qps_thread.join();
+}
+
 int main(int argc, char *argv[]) {
   GFLAGS_NAMESPACE::ParseCommandLineFlags(&argc, &argv, true);
   std::cout << "cass_endpoints: " << FLAGS_cass_endpoints << std::endl;
@@ -450,10 +580,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  for (auto &table_name : table_names) {
-    auto slice_cnt =
-        cass_handler.LoadSlices(FLAGS_mono_database_name, table_name, 21);
-    std::cout << "table_name: " << table_name << " ,slices_cnt: " << slice_cnt
-              << std::endl;
-  }
+  RunningState running_state(FLAGS_max_flying_req_num);
+  LoadSlicesStressTest(cass_handler, FLAGS_mono_database_name, table_names,
+                       running_state);
 }
