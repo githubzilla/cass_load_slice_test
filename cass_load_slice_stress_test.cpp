@@ -506,7 +506,7 @@ class RunningState {
     auto qps = static_cast<double>(req_cnt_) / (duration / 1000.0);
     auto avg_result_cnt =
         static_cast<double>(result_cnt_) / (duration / 1000.0);
-    auto avg_latency = static_cast<double>(latency_sum_ )/req_cnt_;
+    auto avg_latency = static_cast<double>(latency_sum_) / req_cnt_;
     req_cnt_ = 0;
     latency_sum_ = 0;
     result_cnt_ = 0;
@@ -543,12 +543,12 @@ void DumpQPS(RunningState &running_state) {
     auto result = running_state.qps();
 
     // print timestamp, qps, avg_result_cnt, flying_req_cnt
-    std::cout << FormatTimestamp(now()) << ", qps: " << std::fixed
-              << std::setprecision(0) << result.qps_
-              << ", avg_latency: " << std::fixed << std::setprecision(0)
-              << result.avg_latency_ << " microseconds"
-              << ", avg_result_cnt: " << std::fixed << std::setprecision(0)
-              << result.avg_result_cnt_
+    std::cout << FormatTimestamp(now())
+              << ", qps: " << static_cast<int64_t>(result.qps_)
+              << ", avg_latency: " << static_cast<int64_t>(result.avg_latency_)
+              << " milliseconds"
+              << ", avg_result_cnt: "
+              << static_cast<int64_t>(result.avg_result_cnt_)
               << ", flying_req_cnt: " << running_state.flying_req_cnt()
               << std::endl;
   }
@@ -591,7 +591,8 @@ void RunLoadSlicesLoop(const int64_t runner_idx, CassHandler &cass_handler,
     callback_data->callback = [&running_state,
                                callback_data](size_t result_cnt) {
       auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
-                         now() - callback_data->start_time).count();
+                         now() - callback_data->start_time)
+                         .count();
       running_state.inc_req_cnt(result_cnt, latency);
       running_state.dec_flying_req_cnt();
     };
