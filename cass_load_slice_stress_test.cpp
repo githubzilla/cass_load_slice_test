@@ -164,7 +164,7 @@ struct LoadSliceCallbackData {
 };
 
 void PrintBytes(const std::vector<char> &bytes, const std::string &prefix) {
-  std::cout << prefix;
+  std::cout << prefix << ", ";
   for (auto &byte : bytes) {
     std::cout << std::hex << std::setw(2) << std::setfill('0')
               << static_cast<int>(byte);
@@ -423,8 +423,11 @@ class CassHandler {
     const std::vector<char> &end_key = table_slice.end_key();
     lk.unlock();
 
-    PrintBytes(start_key, "table:" +tablename+ ", start_key: ");
-    PrintBytes(end_key, "table:" +tablename+ ", end_key: ");
+    std::cout << "Load: " << tablename << " , at slice: " << slice_idx
+              << std::endl;
+    PrintBytes(start_key, "table: " + tablename + ", start_key: ");
+    PrintBytes(end_key, "table: " + tablename + ", end_key: ");
+
     std::string load_slice_query =
         "SELECT * FROM " + keyspace + "." + kv_table_name +
         " WHERE pk1_ = ? AND pk2_ = ? AND \"___mono_key___\" >= ? AND "
@@ -600,7 +603,7 @@ void RunLoadSlicesLoop(const int64_t runner_idx, CassHandler &cass_handler,
     LoadSliceCallbackData *callback_data = new LoadSliceCallbackData();
     callback_data->start_time_ = now();
     callback_data->callback_ = [&running_state,
-                               callback_data](size_t result_cnt) {
+                                callback_data](size_t result_cnt) {
       auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
                          now() - callback_data->start_time_)
                          .count();
