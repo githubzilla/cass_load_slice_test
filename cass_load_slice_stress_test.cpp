@@ -159,8 +159,8 @@ class TableConfig {
 };
 
 struct LoadSliceCallbackData {
-  std::chrono::time_point<std::chrono::high_resolution_clock> start_time;
-  std::function<void(size_t)> callback;
+  std::chrono::time_point<std::chrono::high_resolution_clock> start_time_;
+  std::function<void(size_t)> callback_;
 };
 
 class CassHandler {
@@ -356,7 +356,7 @@ class CassHandler {
       std::cerr << "Failed to execute query: "
                 << ErrorMessage(load_slice_result_future) << std::endl;
       cass_future_free(load_slice_result_future);
-      callback_data->callback(0);
+      callback_data->callback_(0);
       delete callback_data;
       return;
     }
@@ -370,7 +370,7 @@ class CassHandler {
     }
     cass_iterator_free(load_slice_iterator);
     cass_result_free(load_slice_result);
-    callback_data->callback(row_cnt);
+    callback_data->callback_(row_cnt);
     delete callback_data;
   }
 
@@ -382,7 +382,7 @@ class CassHandler {
                 << std::endl;
     }
     if (slice_idx == 0) {
-      callback_data->callback(0);
+      callback_data->callback_(0);
       delete callback_data;
       return;
     }
@@ -393,7 +393,7 @@ class CassHandler {
       std::cerr << "Failed to find table config, tablename: " << tablename
                 << std::endl;
       lk.unlock();
-      callback_data->callback(0);
+      callback_data->callback_(0);
       delete callback_data;
       return;
     }
@@ -404,7 +404,7 @@ class CassHandler {
     if (slice_idx >= table_slices.size()) {
       std::cerr << "Invalid slice index" << std::endl;
       lk.unlock();
-      callback_data->callback(0);
+      callback_data->callback_(0);
       delete callback_data;
       return;
     }
@@ -433,7 +433,7 @@ class CassHandler {
         load_slice_statement, 3,
         reinterpret_cast<const cass_byte_t *>(end_key.data()), end_key.size());
     cass_statement_set_paging_size(load_slice_statement, 1000);
-    callback_data->start_time = now();
+    callback_data->start_time_ = now();
     CassFuture *load_slice_result_future =
         cass_session_execute(session_, load_slice_statement);
     cass_future_set_callback(load_slice_result_future, OnLoadSlices,
@@ -497,15 +497,14 @@ class RunningState {
   RunningResult qps() {
     std::lock_guard<std::mutex> lock(mutex_);
     auto now_time = now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now_time - start_time_)
-                        .count();
+    auto duration =
+        std::chrono::duration_cast<std::chrono::seconds>(now_time - start_time_)
+            .count();
     if (duration == 0) {
       return {0, 0, 0};
     }
-    auto qps = static_cast<double>(req_cnt_) / (duration / 1000.0);
-    auto avg_result_cnt =
-        static_cast<double>(result_cnt_) / (duration / 1000.0);
+    auto qps = static_cast<double>(req_cnt_) / duration;
+    auto avg_result_cnt = static_cast<double>(result_cnt_) / duration;
     auto avg_latency = static_cast<double>(latency_sum_) / req_cnt_;
     req_cnt_ = 0;
     latency_sum_ = 0;
@@ -588,10 +587,11 @@ void RunLoadSlicesLoop(const int64_t runner_idx, CassHandler &cass_handler,
     int64_t slice_idx = table_name_dist(generator);
     // load slice
     LoadSliceCallbackData *callback_data = new LoadSliceCallbackData();
-    callback_data->callback = [&running_state,
+    callback_data->start_time_ = now();
+    callback_data->callback_ = [&running_state,
                                callback_data](size_t result_cnt) {
       auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
-                         now() - callback_data->start_time)
+                         now() - callback_data->start_time_)
                          .count();
       running_state.inc_req_cnt(result_cnt, latency);
       running_state.dec_flying_req_cnt();
