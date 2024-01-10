@@ -6,6 +6,7 @@
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <sstream>
@@ -154,6 +155,10 @@ class TableConfig {
   std::vector<std::string> columns_;
   std::vector<std::string> column_types_;
   std::vector<TableSlice> table_slices_;
+};
+
+struct LoadSliceCallbackData {
+  std::function<void(size_t)> callback;
 };
 
 class CassHandler {
@@ -342,13 +347,15 @@ class CassHandler {
   }
 
   static void OnLoadSlices(CassFuture *load_slice_result_future, void *data) {
-    auto *callback = static_cast<std::function<void(size_t)> *>(data);
+    LoadSliceCallbackData *callback_data =
+        reinterpret_cast<LoadSliceCallbackData *>(data);
     CassError rc = cass_future_error_code(load_slice_result_future);
     if (rc != CASS_OK) {
       std::cerr << "Failed to execute query: "
                 << ErrorMessage(load_slice_result_future) << std::endl;
       cass_future_free(load_slice_result_future);
-      (*callback)(0);
+      callback_data->callback(0);
+      delete callback_data;
       return;
     }
     const CassResult *load_slice_result =
@@ -361,18 +368,20 @@ class CassHandler {
     }
     cass_iterator_free(load_slice_iterator);
     cass_result_free(load_slice_result);
-    (*callback)(row_cnt);
+    callback_data->callback(row_cnt);
+    delete callback_data;
   }
 
   void LoadSlices(const std::string &database_name,
                   const std::string &table_name, size_t slice_idx,
-                  std::function<void(size_t)> callback) {
+                  LoadSliceCallbackData *callback_data) {
     if (debug_output) {
       std::cout << "Load: " << table_name << " , at slice: " << slice_idx
                 << std::endl;
     }
     if (slice_idx == 0) {
-      callback(0);
+      callback_data->callback(0);
+      delete callback_data;
       return;
     }
     std::unique_lock<std::mutex> lk(mutex_);
@@ -382,7 +391,8 @@ class CassHandler {
       std::cerr << "Failed to find table config, tablename: " << tablename
                 << std::endl;
       lk.unlock();
-      callback(0);
+      callback_data->callback(0);
+      delete callback_data;
       return;
     }
     const TableConfig &table_config = table_config_it->second;
@@ -392,7 +402,8 @@ class CassHandler {
     if (slice_idx >= table_slices.size()) {
       std::cerr << "Invalid slice index" << std::endl;
       lk.unlock();
-      callback(0);
+      callback_data->callback(0);
+      delete callback_data;
       return;
     }
     const TableSlice &table_slice = table_slices[slice_idx];
@@ -422,7 +433,8 @@ class CassHandler {
     cass_statement_set_paging_size(load_slice_statement, 1000);
     CassFuture *load_slice_result_future =
         cass_session_execute(session_, load_slice_statement);
-    cass_future_set_callback(load_slice_result_future, OnLoadSlices, &callback);
+    cass_future_set_callback(load_slice_result_future, OnLoadSlices,
+                             callback_data);
     cass_statement_free(load_slice_statement);
     cass_future_free(load_slice_result_future);
   }
@@ -509,8 +521,8 @@ void DumpQPS(RunningState &running_state) {
                      now().time_since_epoch())
                      .count()
               << ", qps: " << qps.first << "/s, select rows: " << qps.second
-              << "/s, flying_req_cnt: "
-              << running_state.flying_req_cnt() << std::endl;
+              << "/s, flying_req_cnt: " << running_state.flying_req_cnt()
+              << std::endl;
   }
 }
 
@@ -547,11 +559,14 @@ void RunLoadSlicesLoop(const int64_t runner_idx, CassHandler &cass_handler,
     std::uniform_int_distribution<int64_t> slice_dist(0, slice_cnt - 1);
     int64_t slice_idx = table_name_dist(generator);
     // load slice
+    LoadSliceCallbackData *callback_data = new LoadSliceCallbackData();
+    callback_data->callback = [&running_state](size_t result_cnt) {
+      running_state.inc_req_cnt(result_cnt);
+      running_state.dec_flying_req_cnt();
+    };
+
     cass_handler.LoadSlices(database_name, table_name, slice_idx,
-                            [&running_state](size_t result_cnt) {
-                              running_state.inc_req_cnt(result_cnt);
-                              running_state.dec_flying_req_cnt();
-                            });
+                            callback_data);
   }
 }
 
