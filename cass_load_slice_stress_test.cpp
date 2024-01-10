@@ -423,10 +423,12 @@ class CassHandler {
     const std::vector<char> &end_key = table_slice.end_key();
     lk.unlock();
 
-    std::cout << "Load: " << tablename << " , at slice: " << slice_idx
-              << std::endl;
-    PrintBytes(start_key, "table: " + tablename + ", start_key: ");
-    PrintBytes(end_key, "table: " + tablename + ", end_key: ");
+    if (debug_output) {
+      std::cout << "Load: " << tablename << " , at slice: " << slice_idx
+                << std::endl;
+      PrintBytes(start_key, "table: " + tablename + ", start_key: ");
+      PrintBytes(end_key, "table: " + tablename + ", end_key: ");
+    }
 
     std::string load_slice_query =
         "SELECT * FROM " + keyspace + "." + kv_table_name +
@@ -598,7 +600,7 @@ void RunLoadSlicesLoop(const int64_t runner_idx, CassHandler &cass_handler,
     }
 
     std::uniform_int_distribution<int64_t> slice_dist(0, slice_cnt - 1);
-    int64_t slice_idx = table_name_dist(generator);
+    int64_t slice_idx = slice_dist(generator);
     // load slice
     LoadSliceCallbackData *callback_data = new LoadSliceCallbackData();
     callback_data->start_time_ = now();
