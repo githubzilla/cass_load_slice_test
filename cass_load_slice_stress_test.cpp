@@ -587,11 +587,9 @@ void RunLoadSlicesLoop(const int64_t runner_idx, CassHandler &cass_handler,
     int64_t slice_idx = table_name_dist(generator);
     // load slice
     LoadSliceCallbackData *callback_data = new LoadSliceCallbackData();
+    callback_data->start_time_ = now();
     callback_data->callback_ = [&running_state,
                                callback_data](size_t result_cnt) {
-      if(result_cnt == 0) {
-        return;
-      }
       auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
                          now() - callback_data->start_time_)
                          .count();
@@ -670,7 +668,7 @@ int main(int argc, char *argv[]) {
   }
 
   std::cout << "Start test running..." << std::endl;
-  std::this_thread::sleep_for(std::chrono::seconds(1));
+  std::this_thread::sleep_for(std::chrono::seconds(5));
   RunningState running_state(FLAGS_max_flying_req_num);
   LoadSlicesStressTest(cass_handler, FLAGS_mono_database_name, table_names,
                        running_state);
