@@ -621,6 +621,7 @@ int main(int argc, char *argv[]) {
   }
 
   std::cout << "Start test running..." << std::endl;
+  std::this_thread::sleep_for(std::chrono::seconds(5));
   RunningState running_state(FLAGS_max_flying_req_num);
   LoadSlicesStressTest(cass_handler, FLAGS_mono_database_name, table_names,
                        running_state);
