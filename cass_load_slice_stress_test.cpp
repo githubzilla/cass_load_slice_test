@@ -587,9 +587,11 @@ void RunLoadSlicesLoop(const int64_t runner_idx, CassHandler &cass_handler,
     int64_t slice_idx = table_name_dist(generator);
     // load slice
     LoadSliceCallbackData *callback_data = new LoadSliceCallbackData();
-    callback_data->start_time_ = now();
     callback_data->callback_ = [&running_state,
                                callback_data](size_t result_cnt) {
+      if(result_cnt == 0) {
+        return;
+      }
       auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
                          now() - callback_data->start_time_)
                          .count();
