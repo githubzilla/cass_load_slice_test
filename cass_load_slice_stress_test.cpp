@@ -590,10 +590,9 @@ void RunLoadSlicesLoop(const int64_t runner_idx, CassHandler &cass_handler,
     LoadSliceCallbackData *callback_data = new LoadSliceCallbackData();
     callback_data->callback = [&running_state,
                                callback_data](size_t result_cnt) {
-      auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
-                         now() - callback_data->start_time)
-                         .count();
-      running_state.inc_req_cnt(result_cnt);
+      auto latency = std::chrono::duration_cast<std::chrono::microseconds>(
+                         now() - callback_data->start_time);
+      running_state.inc_req_cnt(result_cnt, latency);
       running_state.dec_flying_req_cnt();
     };
 
