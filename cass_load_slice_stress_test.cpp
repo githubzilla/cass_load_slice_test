@@ -163,6 +163,15 @@ struct LoadSliceCallbackData {
   std::function<void(size_t)> callback_;
 };
 
+void PrintBytes(const std::vector<char> &bytes, const std::string &prefix) {
+  std::cout << prefix;
+  for (auto &byte : bytes) {
+    std::cout << std::hex << std::setw(2) << std::setfill('0')
+              << static_cast<int>(byte);
+  }
+  std::cout << std::endl;
+}
+
 class CassHandler {
  public:
   CassHandler(const std::string &cass_endpoints, const uint32_t cass_port,
@@ -414,6 +423,8 @@ class CassHandler {
     const std::vector<char> &end_key = table_slice.end_key();
     lk.unlock();
 
+    PrintBytes(start_key, "table:" +tablename+ ", start_key: ");
+    PrintBytes(end_key, "table:" +tablename+ ", end_key: ");
     std::string load_slice_query =
         "SELECT * FROM " + keyspace + "." + kv_table_name +
         " WHERE pk1_ = ? AND pk2_ = ? AND \"___mono_key___\" >= ? AND "
