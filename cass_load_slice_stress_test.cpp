@@ -492,7 +492,7 @@ class RunningState {
  private:
   std::atomic<bool> stop_flag_;
   std::atomic<int64_t> flying_req_cnt_;
-  int64_t max_flying_req_cnt_;
+  const int64_t max_flying_req_cnt_;
   int64_t req_cnt_;
   int64_t result_cnt_;
   std::chrono::time_point<std::chrono::high_resolution_clock> start_time_;
@@ -524,7 +524,7 @@ void RunLoadSlicesLoop(const int64_t runner_idx, CassHandler &cass_handler,
 
   while (running_state.stop_flag() == false) {
     if (running_state.is_flying_req_cnt_full()) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
       continue;
     }
 
