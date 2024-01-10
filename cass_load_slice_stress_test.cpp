@@ -524,7 +524,7 @@ void RunLoadSlicesLoop(const int64_t runner_idx, CassHandler &cass_handler,
 
   while (running_state.stop_flag() == false) {
     if (running_state.is_flying_req_cnt_full()) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      std::this_thread::sleep_for(std::chrono::microseconds(10));
       continue;
     }
 
