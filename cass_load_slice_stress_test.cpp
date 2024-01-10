@@ -345,7 +345,9 @@ class CassHandler {
         slice_start_key_data = slice_key_data;
         slice_start_key_size = slice_key_size;
       }
+      cass_iterator_free(slice_keys_iterator);
     }
+    cass_iterator_free(table_range_iterator);
     cass_future_free(table_range_result_future);
     cass_statement_free(table_range_statement);
     TableConfig table_config(database_name, table_name, keyspace, kvtablename,
