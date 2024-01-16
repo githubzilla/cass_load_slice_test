@@ -431,8 +431,8 @@ class CassHandler {
       PrintBytes(end_key, "table: " + tablename + ", end_key: ");
     }
 
-    CassStatement *load_slice_statement = load_slice_statements_[tablename];
-    if (load_slice_statement == nullptr) {
+    const CassPrepared *load_slice_prepared = load_slice_prepared_[tablename];
+    if (load_slice_prepared == nullptr) {
       std::string load_slice_query =
           "SELECT * FROM " + keyspace + "." + kv_table_name +
           " WHERE pk1_ = ? AND pk2_ = ? AND \"___mono_key___\" >= ? AND "
@@ -440,28 +440,41 @@ class CassHandler {
       if (debug_output) {
         std::cout << "load_slice_query: " << load_slice_query << std::endl;
       }
-      load_slice_statement =
-          cass_statement_new(load_slice_query.c_str(), 4);
-      load_slice_statements_[tablename] = load_slice_statement;
+      CassFuture *future =
+          cass_session_prepare(session_, load_slice_query.c_str());
+      cass_future_wait(future);
+      CassError rc = cass_future_error_code(future);
+      if (rc != CASS_OK) {
+        std::cerr << "Failed to prepare query: " << ErrorMessage(future)
+                  << std::endl;
+        cass_future_free(future);
+        callback_data->callback_(0);
+        delete callback_data;
+        return;
+      }
+      load_slice_prepared = cass_future_get_prepared(future);
+      load_slice_prepared_[tablename] = load_slice_prepared;
     }
     lk.unlock();
 
-    cass_statement_bind_int32(load_slice_statement, 0, partition_id);
-    cass_statement_bind_int16(load_slice_statement, 1, -1);
+    CassStatement *load_slice_stmt = cass_prepared_bind(load_slice_prepared);
+    cass_statement_set_is_idempotent(load_slice_stmt, cass_true);
+    cass_statement_bind_int32(load_slice_stmt, 0, partition_id);
+    cass_statement_bind_int16(load_slice_stmt, 1, -1);
     cass_statement_bind_bytes(
-        load_slice_statement, 2,
+        load_slice_stmt, 2,
         reinterpret_cast<const cass_byte_t *>(start_key.data()),
         start_key.size());
     cass_statement_bind_bytes(
-        load_slice_statement, 3,
+        load_slice_stmt, 3,
         reinterpret_cast<const cass_byte_t *>(end_key.data()), end_key.size());
-    cass_statement_set_paging_size(load_slice_statement, 1000);
+    cass_statement_set_paging_size(load_slice_stmt, 1000);
     callback_data->start_time_ = now();
     CassFuture *load_slice_result_future =
-        cass_session_execute(session_, load_slice_statement);
+        cass_session_execute(session_, load_slice_stmt);
     cass_future_set_callback(load_slice_result_future, OnLoadSlices,
                              callback_data);
-    cass_statement_free(load_slice_statement);
+    cass_statement_free(load_slice_stmt);
     cass_future_free(load_slice_result_future);
   }
 
@@ -482,7 +495,7 @@ class CassHandler {
   CassCluster *cluster_;
   CassSession *session_;
   std::unordered_map<std::string, TableConfig> table_configs_;
-  std::unordered_map<std::string, CassStatement *> load_slice_statements_;
+  std::unordered_map<std::string, const CassPrepared *> load_slice_prepared_;
 };
 
 struct RunningResult {
