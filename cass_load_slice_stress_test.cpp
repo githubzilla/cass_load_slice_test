@@ -423,7 +423,6 @@ class CassHandler {
     const int32_t partition_id = table_slice.partition_id();
     const std::vector<char> &start_key = table_slice.start_key();
     const std::vector<char> &end_key = table_slice.end_key();
-    lk.unlock();
 
     if (debug_output) {
       std::cout << "Load: " << tablename << " , at slice: " << slice_idx
@@ -432,15 +431,21 @@ class CassHandler {
       PrintBytes(end_key, "table: " + tablename + ", end_key: ");
     }
 
-    std::string load_slice_query =
-        "SELECT * FROM " + keyspace + "." + kv_table_name +
-        " WHERE pk1_ = ? AND pk2_ = ? AND \"___mono_key___\" >= ? AND "
-        "\"___mono_key___\" < ? ALLOW FILTERING";
-    if (debug_output) {
-      std::cout << "load_slice_query: " << load_slice_query << std::endl;
+    CassStatement *load_slice_statement = load_slice_statements_[tablename];
+    if (load_slice_statement == nullptr) {
+      std::string load_slice_query =
+          "SELECT * FROM " + keyspace + "." + kv_table_name +
+          " WHERE pk1_ = ? AND pk2_ = ? AND \"___mono_key___\" >= ? AND "
+          "\"___mono_key___\" < ? ALLOW FILTERING";
+      if (debug_output) {
+        std::cout << "load_slice_query: " << load_slice_query << std::endl;
+      }
+      load_slice_statement =
+          cass_statement_new(load_slice_query.c_str(), 4);
+      load_slice_statements_[tablename] = load_slice_statement;
     }
-    CassStatement *load_slice_statement =
-        cass_statement_new(load_slice_query.c_str(), 4);
+    lk.unlock();
+
     cass_statement_bind_int32(load_slice_statement, 0, partition_id);
     cass_statement_bind_int16(load_slice_statement, 1, -1);
     cass_statement_bind_bytes(
@@ -477,6 +482,7 @@ class CassHandler {
   CassCluster *cluster_;
   CassSession *session_;
   std::unordered_map<std::string, TableConfig> table_configs_;
+  std::unordered_map<std::string, CassStatement *> load_slice_statements_;
 };
 
 struct RunningResult {
