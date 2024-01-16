@@ -436,7 +436,7 @@ class CassHandler {
       std::string load_slice_query =
           "SELECT * FROM " + keyspace + "." + kv_table_name +
           " WHERE pk1_ = ? AND pk2_ = ? AND \"___mono_key___\" >= ? AND "
-          "\"___mono_key___\" < ? ALLOW FILTERING";
+          "\"___mono_key___\" < ?";
       if (debug_output) {
         std::cout << "load_slice_query: " << load_slice_query << std::endl;
       }
